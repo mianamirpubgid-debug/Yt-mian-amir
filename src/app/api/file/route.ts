@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import {
   checkUrl,
   normFormat,
@@ -56,6 +56,7 @@ type Source = {
   total: number | null; // EOF par set
   probed: ProbeMeta | null;
   probePromise: Promise<ProbeMeta> | null;
+  fillPromise: Promise<void> | null;
   done: boolean;
   err: Error | null;
   waiters: Set<() => void>;
@@ -103,6 +104,7 @@ async function ensureSource(key: string, getFresh: () => Promise<string>): Promi
       total: null,
       probed: null,
       probePromise: null,
+      fillPromise: null,
       done: false,
       err: null,
       waiters: new Set(),
@@ -110,7 +112,7 @@ async function ensureSource(key: string, getFresh: () => Promise<string>): Promi
     sources.set(key, src);
     srcInflight.delete(key);
     console.log(`[src] fill start ${key.slice(-28)}`);
-    (async () => {
+    src.fillPromise = (async () => {
       try {
         let upstream = await fetchUpstream(key);
         if (RETRY_STATUS.has(upstream.status)) {
@@ -128,7 +130,22 @@ async function ensureSource(key: string, getFresh: () => Promise<string>): Promi
         }
         const reader = upstream.body.getReader();
         for (;;) {
-          const { done, value } = await reader.read();
+          // 45s stall watchdog: upstream atak jaye to jo mila usi par EOF qarar do
+          let tid: ReturnType<typeof setTimeout> | undefined;
+          const timer = new Promise<"STALL">((res) => {
+            tid = setTimeout(() => res("STALL"), 45_000);
+          });
+          const result = (await Promise.race([reader.read(), timer])) as
+            | { done: boolean; value?: Uint8Array }
+            | "STALL";
+          if (tid) clearTimeout(tid);
+          if (result === "STALL") {
+            console.log(`[src] fill STALL ${key.slice(-28)} @ ${src.bytesSeen} -> EOF qarar`);
+            reader.cancel().catch(() => {});
+            src.total = src.bytesSeen;
+            break;
+          }
+          const { done, value } = result;
           if (done) {
             src.total = src.bytesSeen;
             break;
@@ -428,6 +445,14 @@ export async function GET(req: NextRequest) {
     }
 
     const { src, meta, title } = await resolveSource(url, fmt);
+    // Response khatam hone ke baad bhi fill zinda rakho (Vercel waitUntil)
+    if (src.fillPromise) {
+      try {
+        after(() => src.fillPromise!);
+      } catch {
+        /* after() na ho to bhi theek */
+      }
+    }
     // fMP4 mein mdat-based total jhoota hota hai — magar fill COMPLETE ho gaya
     // (src.total set) to asli total mil chuka hai, phir sahi 206 slices de sakte hain
     const total = meta.isFmp4 ? src.total : (meta.total ?? src.total);
