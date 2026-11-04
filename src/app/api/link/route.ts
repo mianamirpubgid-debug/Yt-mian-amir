@@ -1,5 +1,11 @@
 import { NextRequest } from "next/server";
-import { checkUrl, normFormat, getResult, type FinalPayload } from "@/lib/savenow";
+import {
+  checkUrl,
+  normFormat,
+  getResult,
+  invalidateCache,
+  type FinalPayload,
+} from "@/lib/savenow";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -51,6 +57,10 @@ export async function GET(req: NextRequest) {
   try {
     const url = checkUrl(req.nextUrl.searchParams.get("url"));
     const fmt = normFormat(req.nextUrl.searchParams.get("format"));
+    // refresh=1 -> cache khiis kar ke FRESH job (savenow kabhi kabhi broken file deta hai)
+    if (req.nextUrl.searchParams.get("refresh") === "1") {
+      invalidateCache(url, fmt);
+    }
     const result = await getResult(url, fmt);
     const enc = encodeURIComponent;
 
