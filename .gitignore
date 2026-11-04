@@ -55,6 +55,7 @@ server.log
 
 # Secrets / sandbox-only dirs (KABHI push na hon)
 .secrets/
+.vercel/
 /upload/
 /download/
 /scripts/

@@ -128,14 +128,25 @@ export async function getBrowser(): Promise<Browser> {
   if (store.launching) return store.launching;
   store.launching = (async () => {
     log("Browser launch ho raha hai...");
+    let executablePath: string;
+    let args = [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ];
+    if (process.env.VERCEL) {
+      // Vercel serverless: @sparticuz/chromium (lambda-optimized chromium, /tmp mein extract hota hai)
+      const ch = (await import("@sparticuz/chromium")).default;
+      executablePath = await ch.executablePath();
+      args = [...ch.args, "--disable-blink-features=AutomationControlled", "--disable-gpu"];
+      log("Vercel chromium:", executablePath);
+    } else {
+      executablePath = chromePath();
+    }
     const browser = await chromium.launch({
       headless: true,
-      executablePath: chromePath(),
-      args: [
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled",
-      ],
+      executablePath,
+      args,
     });
     browser.on("disconnected", () => {
       store.browser = null;
