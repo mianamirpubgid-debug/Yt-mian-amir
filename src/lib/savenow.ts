@@ -101,13 +101,35 @@ function log(...a: unknown[]) {
 }
 
 /* --------------------------- Semaphore (MAX_PAGES) --------------------------- */
+/* Serverless chromium kabhi kabhi mid-request crash hota hai ("Target page,
+   context or browser has been closed"). Aise par singleton reset kar ke EK
+   dafa retry — warna user ko 502 milta hai. */
+const BROWSER_CRASH =
+  /Target page, context or browser has been closed|Browser has been closed|Target closed|Session closed|browserContext|Protocol error/i;
+
 async function withPageSlot<T>(fn: () => Promise<T>): Promise<T> {
   if (store.sem >= MAX_PAGES) {
     await new Promise<void>((res) => store.queue.push(res));
   }
   store.sem++;
   try {
-    return await fn();
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (BROWSER_CRASH.test(msg)) {
+        log("Browser crash — reset + retry:", msg.slice(0, 90));
+        try {
+          await store.browser?.close();
+        } catch {
+          /* ignore */
+        }
+        store.browser = null;
+        store.launching = null;
+        return await fn();
+      }
+      throw e;
+    }
   } finally {
     store.sem--;
     const next = store.queue.shift();
