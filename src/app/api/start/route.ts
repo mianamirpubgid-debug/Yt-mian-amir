@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  checkUrl,
   normFormat,
+  resolveVideoUrl,
   store,
   startNewJob,
   CACHE_TTL_MS,
@@ -12,7 +12,7 @@ export const maxDuration = 120;
 
 export async function GET(req: NextRequest) {
   try {
-    const url = checkUrl(req.nextUrl.searchParams.get("url"));
+    const url = resolveVideoUrl(req.nextUrl.searchParams, req.nextUrl.search);
     const fmt = normFormat(req.nextUrl.searchParams.get("format"));
     const key = `${url}|${fmt}`;
 

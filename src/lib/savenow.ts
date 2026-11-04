@@ -362,6 +362,58 @@ export function checkUrl(url: string | null): string {
   return u;
 }
 
+/* ---------------- Smart URL resolver (sloppy input bhi chalta hai) ----------------
+ *  - url= param: encoded / unencoded / adhoora-encoded / sirf 11-char video ID
+ *  - v=<id> param
+ *  - raw query mein kahin bhi youtube.com/watch?v= | youtu.be/ | shorts/ | live/ | embed/
+ *  YouTube links canonical watch?v=ID bante hain (cache key hamesha ek si rehti hai). */
+const YT_ID_RE =
+  /(?:youtube\.com\/(?:watch\?(?:[^#\s]*&)*v=|shorts\/|live\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+
+function badUrlErr(placeholder: boolean): Error {
+  return placeholder
+    ? new Error(
+        "VIDEO_URL ek placeholder hai — uski jagah apni asli YouTube video ka link lagao. Misaal: /api/link?url=https://youtu.be/dQw4w9WgXcQ&format=360"
+      )
+    : new Error(
+        "Valid video URL do — misaal: /api/link?url=https://youtu.be/dQw4w9WgXcQ&format=360"
+      );
+}
+
+export function resolveVideoUrl(sp: URLSearchParams, rawSearch: string): string {
+  const isId = (s: string) => /^[A-Za-z0-9_-]{11}$/.test(s);
+  const isPlaceholder = (s: string) => /^video[_-]?url$/i.test(s.trim());
+
+  const direct = (sp.get("url") || "").trim();
+  if (direct) {
+    if (isPlaceholder(direct)) throw badUrlErr(true);
+    if (/^https?:\/\//i.test(direct)) {
+      const m = direct.match(YT_ID_RE);
+      if (m) return `https://www.youtube.com/watch?v=${m[1]}`;
+      if (!/youtu\.be|youtube\.com/i.test(direct)) return direct; // non-YouTube — jaisa hai waisa
+      // YouTube URL magar ID nahi mili (unencoded watch?v= toota hota hai) -> niche try
+    } else if (isId(direct)) {
+      return `https://www.youtube.com/watch?v=${direct}`; // sirf ID de di
+    }
+  }
+
+  const v = (sp.get("v") || "").trim();
+  if (!isPlaceholder(v) && isId(v)) return `https://www.youtube.com/watch?v=${v}`;
+
+  let decoded = rawSearch;
+  try {
+    decoded = decodeURIComponent(rawSearch);
+  } catch {
+    /* adhoora encoding — jaisa hai waisa scan */
+  }
+  for (const s of new Set([rawSearch, decoded])) {
+    const m = s.match(YT_ID_RE);
+    if (m) return `https://www.youtube.com/watch?v=${m[1]}`;
+  }
+
+  throw badUrlErr(false);
+}
+
 export async function getResult(url: string, fmt: string): Promise<FinalPayload> {
   const key = `${url}|${fmt}`;
   const c = store.cache.get(key);

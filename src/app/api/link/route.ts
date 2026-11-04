@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import {
-  checkUrl,
   normFormat,
   getResult,
   invalidateCache,
+  resolveVideoUrl,
   type FinalPayload,
 } from "@/lib/savenow";
 
@@ -52,13 +52,33 @@ document.querySelectorAll("[data-src]").forEach(function(el){ el.src = el.getAtt
 </body></html>`;
 }
 
+function errorHtml(msg: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Galat link</title><style>
+body{margin:0;background:#0f1220;color:#e2e8f0;font:15px/1.5 system-ui,-apple-system,sans-serif;display:flex;justify-content:center;padding:16px}
+main{width:100%;max-width:560px}
+h1{font-size:17px;color:#fda4af;margin:14px 0 8px}
+p{margin:8px 0;color:#cbd5e1}
+code{background:#10131f;color:#6ee7b7;padding:2px 6px;border-radius:6px;font-size:12px;word-break:break-all}
+ol{color:#94a3b8;padding-left:20px}
+</style></head><body><main>
+<h1>Link theek nahi laga</h1>
+<p>${esc(msg)}</p>
+<ol><li>YouTube app/site se video ka link copy karo (Share &gt; Copy link)</li>
+<li>Wo link <code>VIDEO_URL</code> ki jagah paste karo</li></ol>
+<p>Misaal: <code>/api/link?url=https://youtu.be/dQw4w9WgXcQ&amp;format=360</code></p>
+</main></body></html>`;
+}
+
 export async function GET(req: NextRequest) {
   const started = Date.now();
+  const accept = req.headers.get("accept") || "";
   try {
-    const url = checkUrl(req.nextUrl.searchParams.get("url"));
-    const fmt = normFormat(req.nextUrl.searchParams.get("format"));
+    const sp = req.nextUrl.searchParams;
+    const url = resolveVideoUrl(sp, req.nextUrl.search);
+    const fmt = normFormat(sp.get("format"));
     // refresh=1 -> cache khiis kar ke FRESH job (savenow kabhi kabhi broken file deta hai)
-    if (req.nextUrl.searchParams.get("refresh") === "1") {
+    if (sp.get("refresh") === "1") {
       invalidateCache(url, fmt);
     }
     const result = await getResult(url, fmt);
@@ -81,21 +101,33 @@ export async function GET(req: NextRequest) {
       seconds_taken: Math.round((Date.now() - started) / 100) / 10,
     };
 
-    // Browser se khola (Accept: text/html) -> pretty clickable page
-    const accept = req.headers.get("accept") || "";
+    // Browser se khola (Accept: text/html):
+    //  - view=1 -> purana play page
+    //  - warna SEEDHA download: /api/file (attachment) par 302 — link click karte hi download
     if (accept.includes("text/html")) {
-      const raw = JSON.stringify(payload, null, 2);
-      return new Response(htmlView(result, fileUrl, playUrl, raw), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      if (sp.get("view") === "1") {
+        const raw = JSON.stringify(payload, null, 2);
+        return new Response(htmlView(result, fileUrl, playUrl, raw), {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        });
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { Location: fileUrl, "Cache-Control": "no-store" },
       });
     }
 
     return Response.json(payload, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
-    return Response.json(
-      { success: false, error: e instanceof Error ? e.message : "Unknown error" },
-      { status: 502 }
-    );
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (accept.includes("text/html")) {
+      return new Response(errorHtml(msg), {
+        status: 400,
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    const status = /URL do|placeholder|Format '/i.test(msg) ? 400 : 502;
+    return Response.json({ success: false, error: msg }, { status });
   }
 }

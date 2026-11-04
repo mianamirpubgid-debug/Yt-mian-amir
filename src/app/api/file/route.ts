@@ -1,9 +1,9 @@
 import { NextRequest, after } from "next/server";
 import {
-  checkUrl,
   normFormat,
   getResult,
   invalidateCache,
+  resolveVideoUrl,
   AUDIO_FORMATS,
   EXT,
   safeName,
@@ -429,7 +429,7 @@ async function resolveSource(
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    const url = checkUrl(sp.get("url"));
+    const url = resolveVideoUrl(sp, req.nextUrl.search);
     const fmt = normFormat(sp.get("format"));
     const customName = sp.get("filename");
     const inline = sp.get("inline") === "1";
